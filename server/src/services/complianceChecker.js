@@ -1,129 +1,166 @@
 /**
- * Compliance Checker Service
- * 
- * Checks text against policy rules and suggests compliant alternatives.
- * Currently uses keyword matching; designed to be replaced with RAG.
+ * Compliance Checker Service - RAG Implementation
+ *
+ * Uses Retrieval-Augmented Generation (RAG) to check text for compliance issues.
+ * Flow:
+ * 1. Generate embedding for input text
+ * 2. Query Pinecone for relevant policy chunks
+ * 3. Use Gemini Pro to analyze compliance with retrieved context
  */
 
+require("dotenv").config();
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const vectorStore = require("./vectorStore");
 const prisma = require("../lib/prisma");
 
-// Fallback rules if database is empty/unavailable
-const FALLBACK_RULES = [
-  {
-    pattern: "100% waterproof",
-    reason: "Product is only water-resistant (IP67), not fully waterproof.",
-    suggestion: "water-resistant (IP67 rated)",
-    category: "legal",
-    severity: "high",
-  },
-  {
-    pattern: "waterproof",
-    reason: "Avoid unqualified 'waterproof' claims; specify rating.",
-    suggestion: "water-resistant",
-    category: "legal",
-    severity: "medium",
-  },
-  {
-    pattern: "guaranteed",
-    reason: "'Guaranteed' implies legal warranty; verify with Legal.",
-    suggestion: "designed to",
-    category: "legal",
-    severity: "medium",
-  },
-  {
-    pattern: "never fails",
-    reason: "Absolute reliability claims are legally risky.",
-    suggestion: "highly reliable",
-    category: "legal",
-    severity: "high",
-  },
-];
+// Initialize Google Generative AI client
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 /**
- * Get all active policy rules from database
- * Falls back to hardcoded rules if DB unavailable
- */
-async function getRules() {
-  try {
-    const rules = await prisma.policyRule.findMany({
-      where: { isActive: true },
-      orderBy: { severity: "desc" },
-    });
-    return rules.length > 0 ? rules : FALLBACK_RULES;
-  } catch (error) {
-    console.warn("⚠️ Could not fetch rules from DB, using fallback:", error.message);
-    return FALLBACK_RULES;
-  }
-}
-
-/**
- * Check text for compliance violations
- * 
+ * Check text for compliance violations using RAG
+ *
  * @param {string} text - The marketing copy to check
- * @returns {Promise<{isCompliant: boolean, violations: Array, suggestedRewrite: string}>}
+ * @returns {Promise<{isCompliant: boolean, issues: Array<{text, severity, reason, suggestion}>}>}
  */
 async function checkCompliance(text) {
-  const rules = await getRules();
-  const lowerText = text.toLowerCase();
-  const violations = [];
-
-  // Check each rule against the text
-  for (const rule of rules) {
-    const pattern = rule.pattern.toLowerCase();
-    if (lowerText.includes(pattern)) {
-      violations.push({
-        id: rule.id || `rule-${violations.length}`,
-        pattern: rule.pattern,
-        reason: rule.reason,
-        suggestion: rule.suggestion,
-        category: rule.category,
-        severity: rule.severity,
-      });
+  try {
+    // Ensure vector store is connected
+    if (!vectorStore.isConnected) {
+      await vectorStore.connect();
     }
+
+    // Step 1: Query Pinecone for relevant policy chunks (top 3)
+    console.log(
+      "🔍 [ComplianceChecker] Searching for relevant policy context..."
+    );
+    const relevantChunks = await vectorStore.search(text, 3);
+
+    // Step 2: Prepare context from retrieved chunks
+    const context = relevantChunks
+      .map((chunk, idx) => `[Policy Reference ${idx + 1}]\n${chunk.text}`)
+      .join("\n\n");
+
+    // Step 3: Use Gemini Pro to analyze compliance
+    console.log(
+      "🤖 [ComplianceChecker] Analyzing compliance with Gemini Pro..."
+    );
+    const analysis = await analyzeWithGemini(text, context);
+
+    // Step 4: Log the check (non-blocking)
+    logComplianceCheck({
+      originalText: text,
+      isCompliant: analysis.isCompliant,
+      violationCount: analysis.issues.length,
+    }).catch(() => {});
+
+    return {
+      isCompliant: analysis.isCompliant,
+      issues: analysis.issues,
+      checkedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    console.error("❌ [ComplianceChecker] Error:", error);
+    throw error;
   }
-
-  // Sort violations by severity (high > medium > low)
-  const severityOrder = { high: 0, medium: 1, low: 2 };
-  violations.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
-
-  // Generate suggested rewrite
-  const suggestedRewrite = generateRewrite(text, violations);
-
-  return {
-    isCompliant: violations.length === 0,
-    violations,
-    suggestedRewrite,
-    originalText: text,
-    checkedAt: new Date().toISOString(),
-  };
 }
 
 /**
- * Generate a compliant rewrite by replacing violations
- * Simple find-replace for demo; LLM-based in full RAG version
+ * Analyze compliance using Gemini Pro with retrieved context
+ *
+ * @param {string} text - Text to check
+ * @param {string} context - Retrieved policy context
+ * @returns {Promise<{isCompliant: boolean, issues: Array}>}
  */
-function generateRewrite(text, violations) {
-  let rewritten = text;
-  
-  // Sort by pattern length (longest first) to avoid partial replacements
-  const sortedViolations = [...violations].sort(
-    (a, b) => b.pattern.length - a.pattern.length
-  );
+async function analyzeWithGemini(text, context) {
+  const prompt = `You are a compliance expert analyzing marketing copy against corporate policy documents.
 
-  for (const v of sortedViolations) {
-    // Case-insensitive replacement
-    const regex = new RegExp(escapeRegex(v.pattern), "gi");
-    rewritten = rewritten.replace(regex, v.suggestion);
-  }
+Your task is to:
+1. Analyze the provided text for compliance issues based on the policy context
+2. Identify any violations, concerns, or potential issues
+3. Provide specific, actionable feedback
 
-  return rewritten;
+Policy Context:
+${
+  context ||
+  "No specific policy context found. Use general compliance best practices."
 }
 
-/**
- * Escape special regex characters in a string
- */
-function escapeRegex(string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+Text to Check:
+"${text}"
+
+Analyze this text for compliance issues and return ONLY a valid JSON object with this exact structure (no markdown, no code blocks, just the JSON):
+{
+  "isCompliant": boolean,
+  "issues": [
+    {
+      "text": "the specific problematic text",
+      "severity": "high" | "medium" | "low",
+      "reason": "why this is a compliance issue",
+      "suggestion": "suggested compliant alternative"
+    }
+  ]
+}
+
+If there are no issues, return {"isCompliant": true, "issues": []}.`;
+
+  try {
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    const responseText = response.text();
+
+    // Extract JSON from response (handle cases where Gemini might wrap it in markdown)
+    let jsonText = responseText.trim();
+
+    // Remove markdown code blocks if present
+    if (jsonText.startsWith("```json")) {
+      jsonText = jsonText.replace(/```json\n?/g, "").replace(/```\n?/g, "");
+    } else if (jsonText.startsWith("```")) {
+      jsonText = jsonText.replace(/```\n?/g, "");
+    }
+
+    // Try to parse JSON
+    let parsedResult;
+    try {
+      parsedResult = JSON.parse(jsonText);
+    } catch (parseError) {
+      // If parsing fails, try to extract JSON object from the text
+      const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        parsedResult = JSON.parse(jsonMatch[0]);
+      } else {
+        throw new Error("Could not parse JSON from response");
+      }
+    }
+
+    // Validate and normalize the response
+    return {
+      isCompliant: parsedResult.isCompliant === true,
+      issues: Array.isArray(parsedResult.issues)
+        ? parsedResult.issues.map((issue) => ({
+            text: issue.text || "",
+            severity: issue.severity || "medium",
+            reason: issue.reason || "",
+            suggestion: issue.suggestion || "",
+          }))
+        : [],
+    };
+  } catch (error) {
+    console.error("❌ [ComplianceChecker] Gemini Pro analysis failed:", error);
+
+    // Fallback: return a basic response
+    return {
+      isCompliant: false,
+      issues: [
+        {
+          text: text,
+          severity: "medium",
+          reason: "Unable to analyze compliance due to API error",
+          suggestion: "Please review manually",
+        },
+      ],
+    };
+  }
 }
 
 /**
@@ -135,8 +172,7 @@ async function logComplianceCheck(result) {
       data: {
         inputText: result.originalText,
         isCompliant: result.isCompliant,
-        violationCount: result.violations.length,
-        suggestedRewrite: result.suggestedRewrite,
+        violationCount: result.violationCount || 0,
       },
     });
   } catch (error) {
@@ -147,6 +183,5 @@ async function logComplianceCheck(result) {
 
 module.exports = {
   checkCompliance,
-  getRules,
   logComplianceCheck,
 };

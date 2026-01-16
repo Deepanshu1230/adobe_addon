@@ -1,100 +1,211 @@
 /**
- * Vector Store Service (Placeholder for RAG)
- * 
- * This is a stub that you'll replace with a real vector database
- * like Pinecone, Weaviate, Qdrant, or pgvector.
- * 
- * RAG Flow:
- * 1. Document Upload → Extract text → Chunk → Embed → Store in Vector DB
- * 2. Query → Embed query → Search Vector DB → Get relevant chunks
- * 3. LLM → Use chunks as context to determine compliance
+ * Vector Store Service - Pinecone Integration (Optimized)
+ * * Handles document indexing and semantic search using Pinecone vector database.
+ * Uses Google Generative AI embeddings (embedding-001) for vector generation.
  */
+
+require("dotenv").config();
+const { Pinecone } = require("@pinecone-database/pinecone");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 class VectorStore {
   constructor() {
     this.isConnected = false;
-    this.provider = "stub"; // Change to "pinecone", "weaviate", etc.
+    this.provider = "pinecone";
+    this.pinecone = null;
+    this.index = null;
+    this.genAI = null;
+    this.embeddingModel = null;
   }
 
-  /**
-   * Initialize connection to vector database
-   */
   async connect() {
-    console.log("🔌 [VectorStore] Connecting... (stub - no-op)");
-    // TODO: Initialize your vector DB client here
-    // Example for Pinecone:
-    // this.client = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
-    // this.index = this.client.index("corporate-brain");
-    this.isConnected = true;
-    return true;
+    try {
+      if (!process.env.GOOGLE_API_KEY)
+        throw new Error("GOOGLE_API_KEY missing");
+      if (!process.env.PINECONE_API_KEY)
+        throw new Error("PINECONE_API_KEY missing");
+
+      // Initialize Gemini
+      this.genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+      this.embeddingModel = this.genAI.getGenerativeModel({
+        model: "text-embedding-004",
+      });
+
+      // Initialize Pinecone
+      this.pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
+
+      // CRITICAL: Ensure we use the correct index from .env
+      const indexName = process.env.PINECONE_INDEX;
+      if (!indexName) throw new Error("PINECONE_INDEX is not set in .env");
+
+      this.index = this.pinecone.index(indexName);
+      this.isConnected = true;
+      console.log(`✅ [VectorStore] Connected to Pinecone index: ${indexName}`);
+      return true;
+    } catch (error) {
+      console.error("❌ [VectorStore] Connection failed:", error.message);
+      throw error;
+    }
+  }
+
+  async generateEmbedding(text) {
+    try {
+      // Clean newlines to avoid embedding issues
+      const cleanText = text.replace(/\n/g, " ");
+      const result = await this.embeddingModel.embedContent(cleanText);
+      const embedding = result.embedding?.values || result.embedding || result;
+      return embedding;
+    } catch (error) {
+      console.error(
+        "❌ [VectorStore] Embedding generation failed:",
+        error.message
+      );
+      throw error;
+    }
   }
 
   /**
-   * Index a document's text chunks with embeddings
-   * 
-   * @param {string} docId - Document ID from your database
-   * @param {string} text - Full text content to index
-   * @param {object} metadata - Additional metadata (filename, etc.)
-   * @returns {Promise<string>} Vector store reference ID
+   * Smarter Chunking: Respects word boundaries
    */
+  chunkText(text, chunkSize = 1000, overlap = 100) {
+    const chunks = [];
+    if (!text) return chunks;
+
+    let start = 0;
+    while (start < text.length) {
+      let end = start + chunkSize;
+
+      // If we are not at the end of text, try to find a space to break at
+      if (end < text.length) {
+        const lastSpace = text.lastIndexOf(" ", end);
+        // Only snap to space if it's reasonably close (within last 20% of chunk)
+        if (lastSpace > start + chunkSize * 0.8) {
+          end = lastSpace;
+        }
+      }
+
+      const chunk = text.slice(start, end).trim();
+      if (chunk.length > 0) chunks.push(chunk);
+
+      // Move start forward, minus overlap
+      start = end - overlap;
+    }
+    return chunks;
+  }
+
   async indexDocument(docId, text, metadata = {}) {
-    console.log(`📥 [VectorStore] Indexing document ${docId}...`);
-    console.log(`   Text length: ${text.length} characters`);
-    
-    // TODO: Implement real indexing:
-    // 1. Chunk the text (e.g., 500 chars with 50 char overlap)
-    // 2. Generate embeddings for each chunk (OpenAI, Cohere, etc.)
-    // 3. Upsert to vector DB with docId as namespace/filter
-    
-    // Stub response
-    const vectorId = `vec_${docId}_${Date.now()}`;
-    console.log(`   ✅ Indexed with vectorId: ${vectorId} (stub)`);
-    return vectorId;
+    if (!this.isConnected) await this.connect();
+
+    try {
+      console.log(
+        `📥 [VectorStore] Indexing ${docId} (${text.length} chars)...`
+      );
+      const chunks = this.chunkText(text);
+
+      const vectors = [];
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+
+        // 🛑 RATE LIMIT FIX: Wait 2 seconds before each request
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+
+        // Retry logic for 429 errors
+        let embedding;
+        try {
+          embedding = await this.generateEmbedding(chunk);
+        } catch (e) {
+          console.log("   ⚠️ Hit rate limit. Waiting 60 seconds...");
+          await new Promise((resolve) => setTimeout(resolve, 60000)); // Wait 1 min
+          embedding = await this.generateEmbedding(chunk); // Try once more
+        }
+
+        vectors.push({
+          id: `${docId}_chunk_${i}`,
+          values: embedding,
+          metadata: {
+            docId,
+            chunkIndex: i,
+            text: chunk,
+            ...metadata,
+          },
+        });
+        console.log(`   Processed chunk ${i + 1}/${chunks.length}`);
+      }
+
+      // Batch Upload to Pinecone
+      const batchSize = 100;
+      for (let i = 0; i < vectors.length; i += batchSize) {
+        const batch = vectors.slice(i, i + batchSize);
+        await this.index.upsert(batch);
+      }
+
+      console.log(`   ✅ Indexed ${vectors.length} chunks`);
+      return true;
+    } catch (error) {
+      console.error(`❌ [VectorStore] Indexing failed:`, error.message);
+      throw error;
+    }
+  }
+
+  async search(query, topK = 3) {
+    if (!this.isConnected) await this.connect();
+
+    try {
+      const queryEmbedding = await this.generateEmbedding(query);
+
+      const queryResponse = await this.index.query({
+        vector: queryEmbedding,
+        topK,
+        includeMetadata: true,
+      });
+
+      return queryResponse.matches.map((match) => ({
+        text: match.metadata?.text || "",
+        score: match.score,
+        docId: match.metadata?.docId || "",
+        metadata: match.metadata || {},
+      }));
+    } catch (error) {
+      console.error("❌ [VectorStore] Search failed:", error.message);
+      return []; // Return empty array instead of crashing
+    }
   }
 
   /**
-   * Search for relevant document chunks given a query
-   * 
-   * @param {string} query - The text to search for
-   * @param {number} topK - Number of results to return
-   * @returns {Promise<Array<{text: string, score: number, docId: string}>>}
+   * OPTIMIZED: Uses Native "Delete by Filter"
    */
-  async search(query, topK = 5) {
-    console.log(`🔍 [VectorStore] Searching for: "${query.slice(0, 50)}..."`);
-    
-    // TODO: Implement real search:
-    // 1. Embed the query
-    // 2. Query vector DB for similar chunks
-    // 3. Return results with scores
-    
-    // Stub response - returns empty array
-    console.log(`   ⚠️ Returning empty results (stub)`);
-    return [];
+  async deleteDocument(docId) {
+    if (!this.isConnected) await this.connect();
+
+    try {
+      console.log(`🗑️ [VectorStore] Deleting docId: ${docId}`);
+
+      // Much faster: Delete by metadata filter directly
+      await this.index.deleteMany({ docId: { $eq: docId } });
+
+      console.log(`   ✅ Deleted vectors for ${docId}`);
+      return true;
+    } catch (error) {
+      console.error(`❌ [VectorStore] Delete failed:`, error.message);
+      throw error;
+    }
   }
 
-  /**
-   * Delete all vectors for a document
-   * 
-   * @param {string} vectorId - Vector store reference ID
-   */
-  async deleteDocument(vectorId) {
-    console.log(`🗑️ [VectorStore] Deleting vectors for: ${vectorId} (stub)`);
-    // TODO: Delete vectors from your vector DB
-    return true;
-  }
-
-  /**
-   * Get stats about the vector store
-   */
   async getStats() {
-    return {
-      provider: this.provider,
-      isConnected: this.isConnected,
-      documentCount: 0, // TODO: Query actual count
-      vectorCount: 0,
-    };
+    if (!this.isConnected) await this.connect();
+    try {
+      // Pinecone v3 has a stats endpoint
+      const stats = await this.index.describeIndexStats();
+      return {
+        provider: "pinecone",
+        indexName: process.env.PINECONE_INDEX,
+        totalVectors: stats.totalRecordCount,
+        namespaces: stats.namespaces,
+      };
+    } catch (e) {
+      return { error: e.message };
+    }
   }
 }
 
-// Export singleton instance
 module.exports = new VectorStore();

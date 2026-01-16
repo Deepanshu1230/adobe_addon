@@ -8,10 +8,11 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 
-// Import routes
+// Import routes and services
 const complianceRoutes = require("./routes/compliance");
 const documentsRoutes = require("./routes/documents");
 const rulesRoutes = require("./routes/rules");
+const { checkCompliance } = require("./services/complianceChecker");
 
 // Initialize Express app
 const app = express();
@@ -21,11 +22,13 @@ const app = express();
 // ============================================
 
 // CORS - Allow requests from Adobe Express add-on
-app.use(cors({
-  origin: "*", // Allow all origins for hackathon demo
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-}));
+app.use(
+  cors({
+    origin: "*", // Allow all origins for hackathon demo
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 
 // Parse JSON bodies
 app.use(express.json());
@@ -39,11 +42,47 @@ app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 // Health check endpoint
 app.get("/health", (req, res) => {
-  res.json({ 
-    status: "ok", 
+  res.json({
+    status: "ok",
     service: "Corporate Brain API",
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
   });
+});
+
+// RAG Compliance Check Endpoint
+app.post("/check-compliance", async (req, res) => {
+  try {
+    const { text } = req.body;
+
+    // Validate input
+    if (!text || typeof text !== "string") {
+      return res.status(400).json({
+        error: "Invalid request",
+        message: "Request body must include 'text' field as a string",
+      });
+    }
+
+    if (text.trim().length === 0) {
+      return res.status(400).json({
+        error: "Invalid request",
+        message: "Text cannot be empty",
+      });
+    }
+
+    // Check compliance using RAG
+    const result = await checkCompliance(text);
+
+    // Return result
+    res.json(result);
+  } catch (error) {
+    console.error("❌ [check-compliance] Error:", error);
+    res.status(500).json({
+      error: "Server error",
+      message: "Failed to check compliance",
+      details:
+        process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
 });
 
 // API routes
@@ -59,11 +98,12 @@ app.get("/", (req, res) => {
     description: "AI Compliance Guardian for Adobe Express",
     endpoints: {
       health: "GET /health",
-      checkCompliance: "POST /api/compliance/check",
+      checkCompliance: "POST /check-compliance",
+      checkComplianceAPI: "POST /api/compliance/check",
       uploadDocument: "POST /api/documents/upload",
       listDocuments: "GET /api/documents",
       listRules: "GET /api/rules",
-    }
+    },
   });
 });
 
@@ -79,9 +119,9 @@ app.use((req, res) => {
 // Global error handler
 app.use((err, req, res, next) => {
   console.error("❌ Server Error:", err);
-  res.status(500).json({ 
+  res.status(500).json({
     error: "Internal server error",
-    message: process.env.NODE_ENV === "development" ? err.message : undefined
+    message: process.env.NODE_ENV === "development" ? err.message : undefined,
   });
 });
 
@@ -100,6 +140,7 @@ app.listen(PORT, () => {
 ║   Running on: http://localhost:${PORT}              ║
 ║                                                   ║
 ║   Endpoints:                                      ║
+║   • POST /check-compliance                        ║
 ║   • POST /api/compliance/check                    ║
 ║   • POST /api/documents/upload                    ║
 ║   • GET  /api/documents                           ║
