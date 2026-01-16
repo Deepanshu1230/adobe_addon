@@ -2,7 +2,7 @@
  * Compliance API Routes
  * 
  * POST /api/compliance/check - Check text for compliance issues (RAG-based)
- * POST /check-compliance - Alias endpoint (RAG-based)
+ * POST /api/check-compliance - Alias endpoint (RAG-based)
  */
 
 const express = require("express");
@@ -11,7 +11,7 @@ const { checkCompliance } = require("../services/complianceChecker");
 
 /**
  * POST /api/compliance/check
- * POST /check-compliance
+ * POST /api/check-compliance (alias)
  * 
  * Request body: { text: string }
  * Response: {
@@ -20,7 +20,7 @@ const { checkCompliance } = require("../services/complianceChecker");
  *   checkedAt: string
  * }
  */
-router.post("/check", async (req, res) => {
+const checkHandler = async (req, res) => {
   try {
     const { text } = req.body;
 
@@ -53,7 +53,11 @@ router.post("/check", async (req, res) => {
       details: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
-});
+};
+
+// Mount handler on both routes
+router.post("/check", checkHandler);
+router.post("/check-compliance", checkHandler);
 
 /**
  * GET /api/compliance/stats
@@ -78,6 +82,7 @@ router.get("/stats", async (req, res) => {
         : "N/A",
     });
   } catch (error) {
+    console.error("❌ [compliance/stats] Error:", error);
     res.status(500).json({ error: "Failed to get stats" });
   }
 });

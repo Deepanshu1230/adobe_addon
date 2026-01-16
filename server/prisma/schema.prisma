@@ -61,3 +61,159 @@ model ComplianceCheck {
 
   @@map("compliance_checks")
 }
+
+// ============================================
+// APPROVAL WORKFLOW MODELS
+// ============================================
+
+// User model with roles
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  role      UserRole @default(DESIGNER)
+  avatar    String?  // URL or initials
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  createdContent    Content[]      @relation("ContentCreator")
+  assignedSteps     ApprovalStep[] @relation("StepAssignee")
+  comments          Comment[]
+
+  @@map("users")
+}
+
+enum UserRole {
+  DESIGNER
+  MANAGER
+  LEGAL
+  EXECUTIVE
+  ADMIN
+}
+
+// Content being reviewed (ad, design, copy)
+model Content {
+  id               String        @id @default(cuid())
+  title            String        // e.g., "Galaxy S25 Launch Ad"
+  text             String        @db.Text // The actual content text
+  description      String?       // Brief description
+  status           ContentStatus @default(DRAFT)
+  version          Int           @default(1)
+  complianceResult Json?         // AI compliance check results
+  creatorId        String
+  creator          User          @relation("ContentCreator", fields: [creatorId], references: [id])
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  // Relations
+  workflow    Workflow?
+
+  @@map("content")
+}
+
+enum ContentStatus {
+  DRAFT
+  PENDING_REVIEW
+  IN_REVIEW
+  CHANGES_REQUESTED
+  APPROVED
+  PUBLISHED
+}
+
+// The overall workflow for a piece of content
+model Workflow {
+  id          String         @id @default(cuid())
+  contentId   String         @unique
+  content     Content        @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  currentStep Int            @default(0) // Index of current step
+  status      WorkflowStatus @default(ACTIVE)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  // Relations
+  steps       ApprovalStep[]
+
+  @@map("workflows")
+}
+
+enum WorkflowStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+// Individual approval step
+model ApprovalStep {
+  id          String     @id @default(cuid())
+  workflowId  String
+  workflow    Workflow   @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  stepNumber  Int        // 1, 2, 3, etc.
+  stepName    String     // "Manager Review", "Legal Review", etc.
+  requiredRole UserRole  // Role required to approve this step
+  assigneeId  String?
+  assignee    User?      @relation("StepAssignee", fields: [assigneeId], references: [id])
+  status      StepStatus @default(PENDING)
+  feedback    String?    @db.Text // Feedback if rejected
+  decidedAt   DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  // Relations
+  comments    Comment[]
+
+  @@map("approval_steps")
+}
+
+enum StepStatus {
+  PENDING
+  IN_PROGRESS
+  APPROVED
+  REJECTED
+  SKIPPED
+}
+
+// Comments on approval steps
+model Comment {
+  id        String       @id @default(cuid())
+  stepId    String
+  step      ApprovalStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User         @relation(fields: [authorId], references: [id])
+  text      String       @db.Text
+  createdAt DateTime     @default(now())
+
+  @@map("comments")
+}
+
+// ============================================
+// ADOBE EXPRESS DESIGN TRACKING
+// ============================================
+
+// Design - Tracks Adobe Express designs and their approval status
+model Design {
+  id               String   @id @default(uuid())
+  adobeId          String   @unique // Matches document ID from Add-on SDK
+  status           String   @default("DRAFT") // DRAFT, PENDING, APPROVED, CHANGES_REQUESTED
+  snapshot         String?  @db.Text // Base64 image string
+  text             String?  @db.Text // The text content submitted
+  complianceResult Json?    // AI Check results
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  logs      Log[]
+
+  @@map("designs")
+}
+
+// Log - Tracks actions on designs
+model Log {
+  id        Int      @id @default(autoincrement())
+  designId  String
+  design    Design   @relation(fields: [designId], references: [id], onDelete: Cascade)
+  action    String   // SUBMITTED, APPROVED, REJECTED, etc.
+  feedback  String?
+  createdAt DateTime @default(now())
+
+  @@map("logs")
+}
