@@ -8,10 +8,11 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 
-// Import routes
+// Import routes and services
 const complianceRoutes = require("./routes/compliance");
 const documentsRoutes = require("./routes/documents");
 const rulesRoutes = require("./routes/rules");
+const { checkCompliance } = require("./services/complianceChecker");
 
 // Initialize Express app
 const app = express();
@@ -46,6 +47,42 @@ app.get("/health", (req, res) => {
   });
 });
 
+// RAG Compliance Check Endpoint
+app.post("/check-compliance", async (req, res) => {
+  try {
+    const { text } = req.body;
+
+    // Validate input
+    if (!text || typeof text !== "string") {
+      return res.status(400).json({
+        error: "Invalid request",
+        message: "Request body must include 'text' field as a string",
+      });
+    }
+
+    if (text.trim().length === 0) {
+      return res.status(400).json({
+        error: "Invalid request",
+        message: "Text cannot be empty",
+      });
+    }
+
+    // Check compliance using RAG
+    const result = await checkCompliance(text);
+
+    // Return result
+    res.json(result);
+
+  } catch (error) {
+    console.error("❌ [check-compliance] Error:", error);
+    res.status(500).json({
+      error: "Server error",
+      message: "Failed to check compliance",
+      details: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+});
+
 // API routes
 app.use("/api/compliance", complianceRoutes);
 app.use("/api/documents", documentsRoutes);
@@ -59,7 +96,8 @@ app.get("/", (req, res) => {
     description: "AI Compliance Guardian for Adobe Express",
     endpoints: {
       health: "GET /health",
-      checkCompliance: "POST /api/compliance/check",
+      checkCompliance: "POST /check-compliance",
+      checkComplianceAPI: "POST /api/compliance/check",
       uploadDocument: "POST /api/documents/upload",
       listDocuments: "GET /api/documents",
       listRules: "GET /api/rules",
@@ -100,6 +138,7 @@ app.listen(PORT, () => {
 ║   Running on: http://localhost:${PORT}              ║
 ║                                                   ║
 ║   Endpoints:                                      ║
+║   • POST /check-compliance                        ║
 ║   • POST /api/compliance/check                    ║
 ║   • POST /api/documents/upload                    ║
 ║   • GET  /api/documents                           ║

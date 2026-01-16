@@ -1,22 +1,23 @@
 /**
  * Compliance API Routes
  * 
- * POST /api/compliance/check - Check text for compliance issues
+ * POST /api/compliance/check - Check text for compliance issues (RAG-based)
+ * POST /check-compliance - Alias endpoint (RAG-based)
  */
 
 const express = require("express");
 const router = express.Router();
-const { checkCompliance, logComplianceCheck } = require("../services/complianceChecker");
+const { checkCompliance } = require("../services/complianceChecker");
 
 /**
  * POST /api/compliance/check
+ * POST /check-compliance
  * 
  * Request body: { text: string }
  * Response: {
  *   isCompliant: boolean,
- *   violations: Array<{pattern, reason, suggestion, category, severity}>,
- *   suggestedRewrite: string,
- *   originalText: string
+ *   issues: Array<{text, severity, reason, suggestion}>,
+ *   checkedAt: string
  * }
  */
 router.post("/check", async (req, res) => {
@@ -38,11 +39,8 @@ router.post("/check", async (req, res) => {
       });
     }
 
-    // Check compliance
+    // Check compliance using RAG
     const result = await checkCompliance(text);
-
-    // Log for analytics (non-blocking)
-    logComplianceCheck(result).catch(() => {});
 
     // Return result
     res.json(result);
@@ -52,6 +50,7 @@ router.post("/check", async (req, res) => {
     res.status(500).json({
       error: "Server error",
       message: "Failed to check compliance",
+      details: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 });
