@@ -4,6 +4,6 @@
       "command": "npx",
       "args": ["--yes", "@adobe/express-add-on-dev-mcp@latest"]
     }
-  }
+  },
+  "prisma.pinToPrisma6": true
 }
-

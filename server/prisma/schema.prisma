@@ -1,0 +1,63 @@
+// Prisma Schema for Corporate Brain
+// Docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// MODEL: Document
+// Stores uploaded "truth source" documents (PDFs, guidelines)
+// ============================================
+model Document {
+  id          String   @id @default(cuid())
+  filename    String   // Stored filename on disk
+  originalName String  // Original upload name
+  mimeType    String?  // File MIME type
+  textContent String?  @db.Text // Extracted text from PDF
+  vectorId    String?  // Reference to vector DB (for RAG)
+  fileSize    Int?     // File size in bytes
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("documents")
+}
+
+// ============================================
+// MODEL: PolicyRule
+// Compliance rules (keyword → suggestion)
+// Used for demo; RAG replaces this with semantic search
+// ============================================
+model PolicyRule {
+  id          String   @id @default(cuid())
+  pattern     String   // Text pattern to match (case-insensitive)
+  reason      String   // Why this is a violation
+  suggestion  String   // Compliant alternative text
+  category    String   @default("general") // legal, brand, safety, etc.
+  severity    String   @default("medium")  // low, medium, high
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("policy_rules")
+}
+
+// ============================================
+// MODEL: ComplianceCheck (Optional - for logging)
+// Logs each compliance check for analytics
+// ============================================
+model ComplianceCheck {
+  id              String   @id @default(cuid())
+  inputText       String   @db.Text
+  isCompliant     Boolean
+  violationCount  Int
+  suggestedRewrite String? @db.Text
+  createdAt       DateTime @default(now())
+
+  @@map("compliance_checks")
+}
