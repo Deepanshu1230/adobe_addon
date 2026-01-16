@@ -1,6 +1,6 @@
 /**
  * Corporate Brain - AI Compliance Guardian
- * Clean Black & White UI for Adobe Express
+ * Clean working implementation
  */
 
 import "@spectrum-web-components/theme/express/scale-medium.js";
@@ -10,7 +10,7 @@ import { Theme } from "@swc-react/theme";
 import React, { useState, useEffect, useRef } from "react";
 import "./App.css";
 
-import { AddOnSDKAPI } from "https://new.express.adobe.com/static/add-on-sdk/sdk.js";
+import addOnUISdk from "https://new.express.adobe.com/static/add-on-sdk/sdk.js";
 
 const API_BASE = "http://localhost:4000/api";
 
@@ -40,7 +40,7 @@ interface UploadedDocument {
 
 type TabType = "check" | "upload" | "documents";
 
-const App = ({ addOnUISdk }: { addOnUISdk: AddOnSDKAPI }) => {
+const App = ({ addOnUISdk: sdk }: { addOnUISdk: typeof addOnUISdk }) => {
   const [activeTab, setActiveTab] = useState<TabType>("check");
   const [inputText, setInputText] = useState("");
   const [result, setResult] = useState<ComplianceResult | null>(null);
@@ -55,6 +55,7 @@ const App = ({ addOnUISdk }: { addOnUISdk: AddOnSDKAPI }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [serverStatus, setServerStatus] = useState<"checking" | "online" | "offline">("checking");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => { checkServerStatus(); }, []);
   useEffect(() => { if (activeTab === "documents") loadDocuments(); }, [activeTab]);
@@ -142,6 +143,12 @@ const App = ({ addOnUISdk }: { addOnUISdk: AddOnSDKAPI }) => {
     setTimeout(() => setCopied(false), 2000);
   }
 
+  function handleTextChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setInputText(e.target.value);
+    if (result) setResult(null);
+    if (error) setError(null);
+  }
+
   const formatSize = (b: number) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b/1024).toFixed(1)} KB` : `${(b/1048576).toFixed(1)} MB`;
   const formatDate = (d: string) => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
@@ -212,12 +219,13 @@ const App = ({ addOnUISdk }: { addOnUISdk: AddOnSDKAPI }) => {
               {/* Input */}
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-2">
-                  Enter content to check
+                  Content to Analyze
                 </label>
                 <textarea
+                  ref={textAreaRef}
                   value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  placeholder="Paste your marketing copy, product descriptions, or any text..."
+                  onChange={handleTextChange}
+                  placeholder="Enter or paste your text here to check for compliance issues..."
                   rows={6}
                   disabled={loading}
                   className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg resize-none
