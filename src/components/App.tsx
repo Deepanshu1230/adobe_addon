@@ -14,20 +14,17 @@ import addOnUISdk from "https://new.express.adobe.com/static/add-on-sdk/sdk.js";
 
 const API_BASE = "http://localhost:4000/api";
 
-interface Violation {
-  id: string;
-  pattern: string;
+interface Issue {
+  text: string;
   reason: string;
   suggestion: string;
-  category: string;
   severity: "low" | "medium" | "high";
 }
 
 interface ComplianceResult {
   isCompliant: boolean;
-  violations: Violation[];
-  suggestedRewrite: string;
-  originalText: string;
+  issues: Issue[];
+  checkedAt: string;
 }
 
 interface UploadedDocument {
@@ -284,7 +281,7 @@ const App = ({ addOnUISdk: sdk }: { addOnUISdk: typeof addOnUISdk }) => {
                       </div>
                       <div>
                         <p className={`text-sm font-semibold ${result.isCompliant ? "text-green-700" : "text-red-700"}`}>
-                          {result.isCompliant ? "No issues found" : `${result.violations.length} issue${result.violations.length > 1 ? "s" : ""} found`}
+                          {result.isCompliant ? "No issues found" : `${result.issues.length} issue${result.issues.length > 1 ? "s" : ""} found`}
                         </p>
                         <p className="text-xs text-gray-500">
                           {result.isCompliant ? "Your content is compliant" : "Review the issues below"}
@@ -293,54 +290,35 @@ const App = ({ addOnUISdk: sdk }: { addOnUISdk: typeof addOnUISdk }) => {
                     </div>
                   </div>
 
-                  {/* Violations */}
+                  {/* Issues */}
                   {!result.isCompliant && (
                     <div className="space-y-3">
-                      {result.violations.map((v, i) => {
-                        const cfg = severityConfig[v.severity];
+                      {result.issues.map((issue, i) => {
+                        const cfg = severityConfig[issue.severity] || severityConfig.medium;
                         return (
-                          <div key={v.id || i} className={`p-4 rounded-lg border-l-4 ${cfg.bg} ${cfg.border}`}>
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="flex items-center gap-2">
-                                <span className={`px-2 py-0.5 text-[10px] font-semibold uppercase text-white rounded ${cfg.badge}`}>
-                                  {v.severity}
-                                </span>
-                                <span className={`text-sm font-medium ${cfg.text}`}>"{v.pattern}"</span>
+                          <div key={i} className={`p-4 rounded-lg border-l-4 ${cfg.bg} ${cfg.border}`}>
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className={`px-2 py-0.5 text-[10px] font-semibold uppercase text-white rounded ${cfg.badge}`}>
+                                {issue.severity}
+                              </span>
+                              <span className={`text-sm font-medium ${cfg.text}`}>"{issue.text}"</span>
+                            </div>
+                            <p className="text-xs text-gray-600 mb-3">{issue.reason}</p>
+                            {issue.suggestion && (
+                              <div className="flex items-center gap-2 p-2 bg-white rounded border border-gray-200">
+                                <span className="text-xs text-gray-500">Suggested:</span>
+                                <span className="text-xs font-medium text-gray-900">"{issue.suggestion}"</span>
+                                <button
+                                  onClick={() => copyText(issue.suggestion)}
+                                  className="ml-auto text-xs text-gray-400 hover:text-gray-600"
+                                >
+                                  Copy
+                                </button>
                               </div>
-                              <span className="text-[10px] text-gray-500 uppercase">{v.category}</span>
-                            </div>
-                            <p className="text-xs text-gray-600 mb-3">{v.reason}</p>
-                            <div className="flex items-center gap-2 p-2 bg-white rounded border border-gray-200">
-                              <span className="text-xs text-gray-500">Suggested:</span>
-                              <span className="text-xs font-medium text-gray-900">"{v.suggestion}"</span>
-                            </div>
+                            )}
                           </div>
                         );
                       })}
-                    </div>
-                  )}
-
-                  {/* Suggested Rewrite */}
-                  {!result.isCompliant && result.suggestedRewrite !== result.originalText && (
-                    <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-                      <h3 className="text-xs font-semibold text-gray-700 mb-2">Corrected Version</h3>
-                      <p className="text-sm text-gray-800 leading-relaxed mb-3 p-3 bg-white rounded border border-gray-200">
-                        {result.suggestedRewrite}
-                      </p>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => { setInputText(result.suggestedRewrite); setResult(null); }}
-                          className="px-4 py-2 text-xs font-medium text-white bg-black rounded-lg hover:bg-gray-800 transition-colors"
-                        >
-                          Use This
-                        </button>
-                        <button
-                          onClick={() => copyText(result.suggestedRewrite)}
-                          className="px-4 py-2 text-xs font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                        >
-                          {copied ? "Copied!" : "Copy"}
-                        </button>
-                      </div>
                     </div>
                   )}
                 </div>
