@@ -57,7 +57,7 @@ const upload = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB max
+    fileSize: 50 * 1024 * 1024, // 50MB max
   },
 });
 
@@ -255,7 +255,7 @@ router.use((error, req, res, next) => {
     if (error.code === "LIMIT_FILE_SIZE") {
       return res.status(400).json({
         error: "File too large",
-        message: "Maximum file size is 10MB",
+        message: "Maximum file size is 50MB",
       });
     }
   }
