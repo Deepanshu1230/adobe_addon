@@ -22,11 +22,13 @@ const app = express();
 // ============================================
 
 // CORS - Allow requests from Adobe Express add-on
-app.use(cors({
-  origin: "*", // Allow all origins for hackathon demo
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-}));
+app.use(
+  cors({
+    origin: "*", // Allow all origins for hackathon demo
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 
 // Parse JSON bodies
 app.use(express.json());
@@ -40,10 +42,10 @@ app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 // Health check endpoint
 app.get("/health", (req, res) => {
-  res.json({ 
-    status: "ok", 
+  res.json({
+    status: "ok",
     service: "Corporate Brain API",
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
   });
 });
 
@@ -72,13 +74,13 @@ app.post("/check-compliance", async (req, res) => {
 
     // Return result
     res.json(result);
-
   } catch (error) {
     console.error("❌ [check-compliance] Error:", error);
     res.status(500).json({
       error: "Server error",
       message: "Failed to check compliance",
-      details: process.env.NODE_ENV === "development" ? error.message : undefined,
+      details:
+        process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 });
@@ -101,7 +103,7 @@ app.get("/", (req, res) => {
       uploadDocument: "POST /api/documents/upload",
       listDocuments: "GET /api/documents",
       listRules: "GET /api/rules",
-    }
+    },
   });
 });
 
@@ -117,9 +119,9 @@ app.use((req, res) => {
 // Global error handler
 app.use((err, req, res, next) => {
   console.error("❌ Server Error:", err);
-  res.status(500).json({ 
+  res.status(500).json({
     error: "Internal server error",
-    message: process.env.NODE_ENV === "development" ? err.message : undefined
+    message: process.env.NODE_ENV === "development" ? err.message : undefined,
   });
 });
 

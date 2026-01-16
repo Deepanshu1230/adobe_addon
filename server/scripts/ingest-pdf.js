@@ -77,8 +77,8 @@ function generateDocId(filePath) {
 async function ingestPDF() {
   try {
     // Validate environment variables
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error("OPENAI_API_KEY is not set in environment variables");
+    if (!process.env.GOOGLE_API_KEY) {
+      throw new Error("GOOGLE_API_KEY is not set in environment variables");
     }
     if (!process.env.PINECONE_API_KEY) {
       throw new Error("PINECONE_API_KEY is not set in environment variables");

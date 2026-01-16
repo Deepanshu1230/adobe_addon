@@ -1,24 +1,25 @@
 /**
  * Compliance Checker Service - RAG Implementation
- * 
+ *
  * Uses Retrieval-Augmented Generation (RAG) to check text for compliance issues.
  * Flow:
  * 1. Generate embedding for input text
  * 2. Query Pinecone for relevant policy chunks
- * 3. Use GPT-4 to analyze compliance with retrieved context
+ * 3. Use Gemini Pro to analyze compliance with retrieved context
  */
 
 require("dotenv").config();
-const OpenAI = require("openai");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 const vectorStore = require("./vectorStore");
 const prisma = require("../lib/prisma");
 
-// Initialize OpenAI client
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Initialize Google Generative AI client
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
 /**
  * Check text for compliance violations using RAG
- * 
+ *
  * @param {string} text - The marketing copy to check
  * @returns {Promise<{isCompliant: boolean, issues: Array<{text, severity, reason, suggestion}>}>}
  */
@@ -30,7 +31,9 @@ async function checkCompliance(text) {
     }
 
     // Step 1: Query Pinecone for relevant policy chunks (top 3)
-    console.log("🔍 [ComplianceChecker] Searching for relevant policy context...");
+    console.log(
+      "🔍 [ComplianceChecker] Searching for relevant policy context..."
+    );
     const relevantChunks = await vectorStore.search(text, 3);
 
     // Step 2: Prepare context from retrieved chunks
@@ -38,9 +41,11 @@ async function checkCompliance(text) {
       .map((chunk, idx) => `[Policy Reference ${idx + 1}]\n${chunk.text}`)
       .join("\n\n");
 
-    // Step 3: Use GPT-4 to analyze compliance
-    console.log("🤖 [ComplianceChecker] Analyzing compliance with GPT-4...");
-    const analysis = await analyzeWithGPT4(text, context);
+    // Step 3: Use Gemini Pro to analyze compliance
+    console.log(
+      "🤖 [ComplianceChecker] Analyzing compliance with Gemini Pro..."
+    );
+    const analysis = await analyzeWithGemini(text, context);
 
     // Step 4: Log the check (non-blocking)
     logComplianceCheck({
@@ -61,21 +66,30 @@ async function checkCompliance(text) {
 }
 
 /**
- * Analyze compliance using GPT-4 with retrieved context
- * 
+ * Analyze compliance using Gemini Pro with retrieved context
+ *
  * @param {string} text - Text to check
  * @param {string} context - Retrieved policy context
  * @returns {Promise<{isCompliant: boolean, issues: Array}>}
  */
-async function analyzeWithGPT4(text, context) {
-  const systemPrompt = `You are a compliance expert analyzing marketing copy against corporate policy documents.
+async function analyzeWithGemini(text, context) {
+  const prompt = `You are a compliance expert analyzing marketing copy against corporate policy documents.
 
 Your task is to:
 1. Analyze the provided text for compliance issues based on the policy context
 2. Identify any violations, concerns, or potential issues
 3. Provide specific, actionable feedback
 
-Return a JSON object with this exact structure:
+Policy Context:
+${
+  context ||
+  "No specific policy context found. Use general compliance best practices."
+}
+
+Text to Check:
+"${text}"
+
+Analyze this text for compliance issues and return ONLY a valid JSON object with this exact structure (no markdown, no code blocks, just the JSON):
 {
   "isCompliant": boolean,
   "issues": [
@@ -90,32 +104,40 @@ Return a JSON object with this exact structure:
 
 If there are no issues, return {"isCompliant": true, "issues": []}.`;
 
-  const userPrompt = `Policy Context:
-${context || "No specific policy context found. Use general compliance best practices."}
-
-Text to Check:
-"${text}"
-
-Analyze this text for compliance issues and return the JSON response.`;
-
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0.3,
-      response_format: { type: "json_object" },
-    });
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    const responseText = response.text();
 
-    const result = JSON.parse(response.choices[0].message.content);
+    // Extract JSON from response (handle cases where Gemini might wrap it in markdown)
+    let jsonText = responseText.trim();
+
+    // Remove markdown code blocks if present
+    if (jsonText.startsWith("```json")) {
+      jsonText = jsonText.replace(/```json\n?/g, "").replace(/```\n?/g, "");
+    } else if (jsonText.startsWith("```")) {
+      jsonText = jsonText.replace(/```\n?/g, "");
+    }
+
+    // Try to parse JSON
+    let parsedResult;
+    try {
+      parsedResult = JSON.parse(jsonText);
+    } catch (parseError) {
+      // If parsing fails, try to extract JSON object from the text
+      const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        parsedResult = JSON.parse(jsonMatch[0]);
+      } else {
+        throw new Error("Could not parse JSON from response");
+      }
+    }
 
     // Validate and normalize the response
     return {
-      isCompliant: result.isCompliant === true,
-      issues: Array.isArray(result.issues)
-        ? result.issues.map((issue) => ({
+      isCompliant: parsedResult.isCompliant === true,
+      issues: Array.isArray(parsedResult.issues)
+        ? parsedResult.issues.map((issue) => ({
             text: issue.text || "",
             severity: issue.severity || "medium",
             reason: issue.reason || "",
@@ -124,8 +146,8 @@ Analyze this text for compliance issues and return the JSON response.`;
         : [],
     };
   } catch (error) {
-    console.error("❌ [ComplianceChecker] GPT-4 analysis failed:", error);
-    
+    console.error("❌ [ComplianceChecker] Gemini Pro analysis failed:", error);
+
     // Fallback: return a basic response
     return {
       isCompliant: false,

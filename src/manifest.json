@@ -1,21 +1,21 @@
 {
-    "testId": "b2a65643-541d-4118-9332-4c156321b947",
-    "name": "My Addon",
-    "version": "1.0.0",
-    "manifestVersion": 2,
-    "requirements": {
-        "apps": [
-            {
-                "name": "Express",
-                "apiVersion": 1
-            }
-        ]
-    },
-    "entryPoints": [
-        {
-            "type": "panel",
-            "id": "panel1",
-            "main": "index.html"
-        }
+  "testId": "b2a65643-541d-4118-9332-4c156321b947",
+  "name": "Veritas",
+  "version": "1.0.0",
+  "manifestVersion": 2,
+  "requirements": {
+    "apps": [
+      {
+        "name": "Express",
+        "apiVersion": 1
+      }
     ]
+  },
+  "entryPoints": [
+    {
+      "type": "panel",
+      "id": "panel1",
+      "main": "index.html"
+    }
+  ]
 }
