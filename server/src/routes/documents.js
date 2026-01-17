@@ -15,23 +15,6 @@ const prisma = require("../lib/prisma");
 const vectorStore = require("../services/vectorStore");
 
 // ============================================
-// HELPER FUNCTIONS
-// ============================================
-
-/**
- * Sanitize text for UTF-8 database storage
- * Removes null bytes and other invalid characters
- */
-function sanitizeText(text) {
-  if (!text) return "";
-  return text
-    .replace(/\x00/g, "")           // Remove null bytes
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ")  // Replace control chars with space
-    .replace(/\uFFFD/g, "")         // Remove replacement characters
-    .trim();
-}
-
-// ============================================
 // MULTER CONFIGURATION
 // ============================================
 
@@ -117,9 +100,6 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       console.warn("⚠️ Could not extract text:", extractError.message);
       textContent = `[Could not extract text from ${originalname}]`;
     }
-
-    // Sanitize text content to remove invalid UTF-8 characters
-    textContent = sanitizeText(textContent);
 
     // Save to database
     const document = await prisma.document.create({
